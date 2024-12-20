@@ -2,13 +2,43 @@ const express = require("express");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 
 const port = process.env.PORT || 3000;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    credentials: true,
+  })
+);
+
 app.use(express.json());
+app.use(cookieParser());
+
+const logger = (req, res, next) => {
+  console.log("inside the logger");
+  next();
+};
+const verifyToken = (req, res, next) => {
+  console.log("inside verify logger", req.cookies);
+  const token = req?.cookies?.token;
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access..." });
+  }
+  jwt.verify(token, process.env.JWT_SECRET, (error, decoded) => {
+    if (error) {
+      return res.status(401).send({ message: "UnAuthorized Access" });
+    }
+    req.user = decoded;
+    next();
+  });
+};
+
+//mongodb link andconnection
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.q3w3t.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -26,7 +56,7 @@ async function run() {
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
@@ -37,6 +67,20 @@ async function run() {
     const jobApplicationCollection = client
       .db("jobPortal")
       .collection("job_applications");
+
+    // AUth related API
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.JWT_SECRET, {
+        expiresIn: "10h",
+      });
+      res
+        .cookie("token", token, {
+          httpOnly: true,
+          secure: false,
+        })
+        .send({ success: true });
+    });
 
     //jobs related API
 
@@ -105,9 +149,15 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/job-applications", async (req, res) => {
+    app.get("/job-applications", verifyToken, async (req, res) => {
       const email = req.query.email;
       const query = { applicant_email: email };
+
+      if (req.user.email !== email) {
+        return res.status(403).send({ message: "Forbidden Access" });
+      }
+      console.log("Cookies Came...", req.cookies);
+
       const result = await jobApplicationCollection.find(query).toArray();
       //aggregate data
       for (const application of result) {
